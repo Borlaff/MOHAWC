@@ -441,7 +441,7 @@ def plot_profile(profile, color, linestyle, linewidth, marker, label):
          
             
 def single_magnetic_pitch_angle(xcen, ycen, I, dI, Q, dQ, U, dU, pol_level, dpol_level, pol_flux, dpol_flux, PA, dPA, incl, dincl, nbins, nsimul,
-                                save_temp=False, SNR_int_limit=5, SNR_pol_limit=1, plot_verbose=False, name="default_", header=None, bin_limits=None, UQ_bias=90.):
+                                save_temp=False, SNR_int_limit=5, SNR_pol_limit=1, SNR_polflux_limit=1, plot_verbose=False, name="default_", header=None, bin_limits=None, UQ_bias=90.):
         image_shape = I.shape
         
         #########################
@@ -583,9 +583,11 @@ def single_magnetic_pitch_angle(xcen, ycen, I, dI, Q, dQ, U, dU, pol_level, dpol
         
         pitch_angle_quality = np.copy(pitch_angle)
         # pitch_angle_quality[np.where((SNR_int < SNR_int_limit) | (SNR_pol < SNR_pol_limit))] = np.nan    # Modify this line, and use PI snr instad of P%. Oct 4th 2021
-        pitch_angle_quality[np.where((SNR_int < SNR_int_limit) | (SNR_polflux < SNR_pol_limit))] = np.nan    # 
+        pitch_angle_quality[np.where((SNR_int < SNR_int_limit) | (SNR_polflux < SNR_polflux_limit) | (SNR_pol < SNR_pol_limit))] = np.nan    # 
         pitch_angle_quality[np.isnan(SNR_int)] = np.nan    
         pitch_angle_quality[np.isnan(SNR_pol)] = np.nan    
+
+        
         save_fits(pitch_angle_quality, name + "pitch_angle.fits", header=header)  
         
         #########################
@@ -606,7 +608,8 @@ def single_magnetic_pitch_angle(xcen, ycen, I, dI, Q, dQ, U, dU, pol_level, dpol
 
 
 def magnetic_pitch_angle(xcen, ycen, I, dI, Q, dQ, U, dU, PA, dPA, incl, dincl, nsimul=100,
-                         nbins=10, plot_verbose=False, SNR_int_limit=5, SNR_pol_limit=1, name="default_", header=None, bin_limits=None, save_temp=False, force_bootmedian=False, UQ_bias=90.):
+                         nbins=10, plot_verbose=False, SNR_int_limit=np.inf, SNR_pol_limit=np.inf, SNR_polflux_limit=np.inf,
+                         name="default_", header=None, bin_limits=None, save_temp=False, force_bootmedian=False, UQ_bias=90.):
     #####################################################
     # ### Magnetic pitch angle ###
     # Alejandro Borlaff - a.s.borlaff@nasa.gov / asborlaff@gmail.com
@@ -699,7 +702,8 @@ def magnetic_pitch_angle(xcen, ycen, I, dI, Q, dQ, U, dU, PA, dPA, incl, dincl, 
         pitch_angle_single, pitch_angle_quality, R_gal = single_magnetic_pitch_angle(xcen=xcen, ycen=ycen, I=I, dI=dI, Q=Q, dQ=dQ, U=U, dU=dU, PA=PA, dPA=dPA, incl=incl, dincl=dincl, 
                                                                                      pol_level=pol_level, dpol_level=dpol_level, pol_flux=pol_flux, dpol_flux=dpol_flux, save_temp=save_temp,
                                                                                      nbins=nbins, nsimul=nsimul, 
-                                                                                     SNR_int_limit=SNR_int_limit, SNR_pol_limit=SNR_pol_limit, plot_verbose=plot_verbose, name=name, header=header, 
+                                                                                     SNR_int_limit=SNR_int_limit, SNR_pol_limit=SNR_pol_limit, SNR_polflux_limit=SNR_polflux_limit,
+                                                                                     plot_verbose=plot_verbose, name=name, header=header, 
                                                                                      bin_limits=bin_limits, UQ_bias=UQ_bias)
                                                                                      
         #os.system("mv " + name + "pitch_angle.fits " + name + "pitch_angle_n" + str(i).zfill(5) + ".fits ")      
