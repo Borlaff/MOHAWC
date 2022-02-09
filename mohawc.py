@@ -42,6 +42,176 @@ s3_down_q = (1-sigma3)/2
 s3_up_q = 1 - s3_down_q
 
 
+
+def make_diagnostic_angle_radial_mask_plot(output, source_center, max_radii, pixscale):
+    # Plot zone
+    fig = plt.figure(figsize=(4.5,4)) # We initialize the figure object 
+    gc = aplpy.FITSFigure("angle_mask_test.fits", figure=fig) # We load the fits file into aplpy
+
+    # This is used to recenter the plot as we want, without cutting the fits file:
+    # More info here: https://aplpy.readthedocs.io/en/stable/api/aplpy.FITSFigure.html#aplpy.FITSFigure.recenter
+    
+    try:
+        gc.recenter(x=source_center[0], y=source_center[1], width=2*max_radii/60./60., height=2*max_radii/60./60.)
+    except:
+        print("Can't recenter, check WCS")
+    # We select the color palette and the max and min limits
+    gc.show_colorscale(cmap="RdYlBu_r", vmin=-180, vmax=180) 
+    # You can check more color palletes here: https://matplotlib.org/stable/tutorials/colors/colormaps.html
+
+    gc.add_colorbar() # Here we add the colorbar 
+    gc.colorbar.set_axis_label_text("Angle (degrees)") # Here we add the label to the color bar (the intensity (Jy/arcsec)
+
+    try:
+        # Here we add the physical scalebar in the plot
+        gc.add_scalebar(30/60/60,'30 arcsec',corner='bottom right',frame=False,color='black') 
+    except:
+        print("Can't add a proper scalebar. Check the WCS")
+        
+    fig.subplots_adjust(top=0.6)     # Add space at top
+    # gc.set_title(title=plot_title, fontsize=13)
+
+
+    ### Contours
+    # The levels list are the contour levels where you want the isophotal lines to be    
+    gc.show_contour("radial_mask_test.fits", levels=[max_radii/2./pixscale, max_radii/pixscale], filled=False, colors="black")
+
+    plt.savefig(output, dpi=300, bbox_inches='tight')
+    plt.show()
+
+
+def magnetic_pitch_wrapper(image_input, name, source_center, PA, dPA, incl, dincl, nsimul, nbins, 
+                           SNR_int_limit, SNR_pol_limit, SNR_polflux_limit, p_limit, plot_title="default", mode="full",
+                           profile_color="blue", profile_linestyle="--", profile_linewidth=3,
+                           profile_marker="s", profile_label="M83", profile_markersize=10, max_radii=False, save_temp=False):
+    # HAWC+ 
+    # Intro ingredients 
+    #image_input="/home/borlaff/NASA/SOFIA/M51_forAlex/M51_forAlex/HAWC+/M51_D_halfbeam.fits"
+    
+    obs = fits.open(image_input)
+    header=obs["STOKES I"].header
+    
+    try:
+        w = WCS(image_input)  
+        xcen, ycen = w.all_world2pix(source_center[0], source_center[1], 0)
+        pixscale = np.abs(obs[1].header["CDELT1"])*60.*60. # arcsec/pix
+
+    except: 
+        print("No WCS available. Assuming that the galaxy is at the center of the image")
+        xcen = obs["STOKES I"].data.shape[0]/2.
+        ycen = obs["STOKES I"].data.shape[1]/2.
+        pixscale  = 1
+    print(str(xcen) + " " + str(ycen))
+    rmax = np.sqrt((obs["STOKES I"].data.shape[0]/2.)**2 + (obs["STOKES I"].data.shape[1]/2.)**2)
+    
+    bin_limits = (np.linspace(0,rmax,nbins)).astype("int")
+
+    # First, repair sky background. There cannot be negative intensities    
+    I =  obs["STOKES I"].data
+    dI = np.abs(obs["ERROR I"].data)
+    Q =  obs["STOKES Q"].data
+    dQ = np.abs(obs["ERROR Q"].data)
+    U =  obs["STOKES U"].data
+    dU = np.abs(obs["ERROR U"].data)
+
+    vmin = np.nanpercentile(I, 2.5)
+    vmax = np.nanpercentile(I, 97.5)
+    
+    #I, dI, Q, dQ, U, dU = apply_mask(mode, mask_fits, header, I, dI, Q, dQ, U, dU)    
+    output_pitch_analysis = magnetic_pitch_angle(xcen=xcen, ycen=ycen, I=I, dI=dI, Q=Q, dQ=dQ, U=U, dU=dU,
+                                                 PA=PA, dPA=dPA, incl=incl, dincl=dincl, nsimul=nsimul,
+                                                 nbins=nbins, plot_verbose=False, SNR_int_limit=SNR_int_limit, 
+                                                 SNR_pol_limit=SNR_pol_limit, SNR_polflux_limit=SNR_polflux_limit, p_limit=p_limit,
+                                                 name=name, header=header,
+                                                 bin_limits=bin_limits, save_temp=save_temp)
+
+    output_pitch_analysis = magnetic_pitch_angle_profile_plot(output_pitch_analysis)
+
+    plt.show()
+    # Remove NaN 
+
+    print(output_pitch_analysis[0])
+    
+    # Lets create the nice INT + Pol + MODEL Plot
+    pitch_model = name + "pitch_model.fits"
+    pol_obs = name + "pol90.fits"
+    pol90_image = fits.open(pol_obs)[0].data
+    
+    SNR_pol = fits.open(name + "SNR_pol.fits")[0].data
+    SNR_int = fits.open(name + "SNR_int.fits")[0].data
+    pol_fraction = fits.open(name + "pol_level.fits")[0].data
+
+    # Generate HAWC+ quality mask
+    quality_mask = np.zeros(I.shape) + 1
+    quality_mask[SNR_pol < SNR_pol_limit] = np.nan
+    quality_mask[SNR_int < SNR_int_limit] = np.nan
+    quality_mask[np.isnan(SNR_pol*SNR_int)] = np.nan
+
+    if max_radii == False:
+        outermost_meaningful_bin = np.max(np.array(output_pitch_analysis[0]["R_s2up"]))
+        max_radii = 1.5*pixscale*outermost_meaningful_bin/np.sqrt(2) # We add a 75% for margin
+    print("Max radii: " + str(max_radii))
+
+
+    # Plot pitch model
+    plot_pitch_model(image_input, pol_obs, pitch_model, SNR_int, SNR_pol, SNRi_cut = SNR_int_limit, 
+                     SNRp_cut = SNR_pol_limit, step=2, scalevec = 2.5, header=header, vmin=vmin, vmax=vmax,
+                     pol_fraction=None, title=plot_title, save_fig=name + "_pitch_model_mode_" + mode + ".png", 
+                     color_model="red", color_obs="white", alpha_model=1,
+                     recenter=[source_center[0], source_center[1], 2*max_radii/60./60., 2*max_radii/60./60.])
+    
+        
+    
+    # Plot of the histogram
+    radial_mask = fits.open("radial_mask_test.fits")[0].data*pixscale
+    pol90_quality = np.copy(pol90_image)
+    pol90_quality[radial_mask>max_radii] = np.nan
+    pol90_quality[np.isnan(quality_mask)] = np.nan 
+    
+    fig, ax = plt.subplots(figsize=(4.5,4))
+    plt.hist(pol90_quality.ravel(), alpha=0.75, label="PA + 90º \nHAWC+ pol. obs.")
+    plt.ylabel("Frequency")
+    plt.xlabel("PA + 90º (degrees)")
+    ax.axvline(PA % 180, color="black", linestyle="--", linewidth=3, label="Galaxy PA")
+    ax.axvspan((PA-dPA) % 180, (PA+dPA) % 180, alpha=0.5, color='grey') #plt.title("PA+90 histogram")
+    plt.legend(frameon=False)
+    plt.savefig(name + "hist.png", dpi=300)
+    plt.show()
+    
+    
+    # recenter=[M51_center[0], M51_center[1], 2*140./60./60., 2*90./60./60.]
+    profile = output_pitch_analysis[0]    
+    fig, ax = plt.subplots(figsize=(10,4))
+    # Line + Points
+    ax.plot(profile["R"]*pixscale, profile["pitch"], color=profile_color, linestyle=profile_linestyle,
+            linewidth=profile_linewidth, label=profile_label, marker=profile_marker, markerfacecolor=profile_color,
+            markersize=profile_markersize, markeredgecolor="black")
+    #ax.scatter(profile["R"]*pixsize_hawc, profile["pitch"], color=color, marker=marker,
+    #           label='')
+    # Error bars
+    ax.fill_between(profile["R"]*pixscale, profile["pitch_s1up"], profile["pitch_s1down"],
+                    where=(profile["pitch_s1up"] > profile["pitch_s1down"]), facecolor=profile_color,
+                    alpha=0.6, label="")
+    ax.fill_between(profile["R"]*pixscale, profile["pitch_s2up"], profile["pitch_s2down"],
+                    where=(profile["pitch_s2up"] > profile["pitch_s2down"]), facecolor=profile_color,
+                    alpha=0.15, label="")
+    plt.axhline(0, linewidth=2.5, linestyle=":", color="black")
+
+    ax.set_xlabel("R (arcsec)")
+    ax.set_ylabel("Magnetic pitch angle $\Psi(R)$ (degrees)")
+    
+    ax.set_title(plot_title)
+    ax.set_xlim((0, max_radii))
+    plt.savefig(name + "profile.png", dpi=300)
+    plt.show()
+    
+    make_diagnostic_angle_radial_mask_plot(output=name + "rad_ang.png", source_center=source_center,
+                                           max_radii=max_radii, pixscale=pixscale)
+    
+    return(output_pitch_analysis)   
+ 
+
+
 def magnetic_pitch_angle_profile_plot(output_magnetic_pitch_angle_profile):
     """
     This is an auxiliary function for magnetic_pitch_angle to plot the profiles
@@ -260,8 +430,11 @@ def plot_pitch_model(I, pol_obs, pitch_model, SNR_int, SNR_pol, SNRi_cut = 10.0,
     except:
         print("No beam size found")
     
-    if isinstance(recenter, (list,np.ndarray)): 
-        gc.recenter(x=recenter[0], y=recenter[1], width=recenter[2], height=recenter[3])
+    try:
+        if isinstance(recenter, (list,np.ndarray)): 
+            gc.recenter(x=recenter[0], y=recenter[1], width=recenter[2], height=recenter[3])
+    except:
+        print("Can't recenter, check WCS")
     #fig.tight_layout()
     #fig.tight_layout()
     fig.subplots_adjust(top=0.6)     # Add space at top
@@ -325,6 +498,7 @@ def create_angle_mask(xsize, ysize, q, theta, center=None, radius=None, pitch=90
     angle_array = np.degrees(np.arctan2(U_ima_pitch,V_ima_pitch))
     # angle_array[angle_array < 0] = angle_array[angle_array < 0] + 360
     return(np.flip(angle_array,axis=1))
+
 
     
        
@@ -441,7 +615,7 @@ def plot_profile(profile, color, linestyle, linewidth, marker, label):
          
             
 def single_magnetic_pitch_angle(xcen, ycen, I, dI, Q, dQ, U, dU, pol_level, dpol_level, pol_flux, dpol_flux, PA, dPA, incl, dincl, nbins, nsimul,
-                                save_temp=False, SNR_int_limit=5, SNR_pol_limit=1, SNR_polflux_limit=1, plot_verbose=False, name="default_", header=None, bin_limits=None, UQ_bias=90.):
+                                save_temp=False, SNR_int_limit=5, SNR_pol_limit=1, SNR_polflux_limit=1, p_limit=np.inf, plot_verbose=False, name="default_", header=None, bin_limits=None, UQ_bias=90.):
         image_shape = I.shape
         
         #########################
@@ -518,8 +692,8 @@ def single_magnetic_pitch_angle(xcen, ycen, I, dI, Q, dQ, U, dU, pol_level, dpol
         # magnetic pitch angle. 
 
         # Now, deproject Polarization corrected map    
-        x_image = np.linspace(0, image_shape[0]-1, image_shape[0]) - int(image_shape[0]/2)
-        y_image = np.linspace(0, image_shape[1]-1, image_shape[1]) - int(image_shape[1]/2)
+        x_image = np.linspace(0, image_shape[0]-1, image_shape[0]) - xcen
+        y_image = np.linspace(0, image_shape[1]-1, image_shape[1]) - ycen
         X_image, Y_image = np.meshgrid(y_image,x_image)
     
         U_image = np.cos(np.radians(pol_corrected+90))/np.sqrt(dpol_level)
@@ -583,10 +757,10 @@ def single_magnetic_pitch_angle(xcen, ycen, I, dI, Q, dQ, U, dU, pol_level, dpol
         
         pitch_angle_quality = np.copy(pitch_angle)
         # pitch_angle_quality[np.where((SNR_int < SNR_int_limit) | (SNR_pol < SNR_pol_limit))] = np.nan    # Modify this line, and use PI snr instad of P%. Oct 4th 2021
-        pitch_angle_quality[np.where((SNR_int < SNR_int_limit) | (SNR_polflux < SNR_polflux_limit) | (SNR_pol < SNR_pol_limit))] = np.nan    # 
+        pitch_angle_quality[np.where((SNR_int < SNR_int_limit) | (SNR_polflux < SNR_polflux_limit) | (SNR_pol < SNR_pol_limit) | (pol_dbias > p_limit))] = np.nan    # 
         pitch_angle_quality[np.isnan(SNR_int)] = np.nan    
         pitch_angle_quality[np.isnan(SNR_pol)] = np.nan    
-
+        pitch_angle_quality[np.isnan(SNR_polflux)] = np.nan    
         
         save_fits(pitch_angle_quality, name + "pitch_angle.fits", header=header)  
         
@@ -608,7 +782,7 @@ def single_magnetic_pitch_angle(xcen, ycen, I, dI, Q, dQ, U, dU, pol_level, dpol
 
 
 def magnetic_pitch_angle(xcen, ycen, I, dI, Q, dQ, U, dU, PA, dPA, incl, dincl, nsimul=100,
-                         nbins=10, plot_verbose=False, SNR_int_limit=np.inf, SNR_pol_limit=np.inf, SNR_polflux_limit=np.inf,
+                         nbins=10, plot_verbose=False, SNR_int_limit=np.inf, SNR_pol_limit=np.inf, SNR_polflux_limit=np.inf, p_limit=np.inf,
                          name="default_", header=None, bin_limits=None, save_temp=False, force_bootmedian=False, UQ_bias=90.):
     #####################################################
     # ### Magnetic pitch angle ###
@@ -702,7 +876,7 @@ def magnetic_pitch_angle(xcen, ycen, I, dI, Q, dQ, U, dU, PA, dPA, incl, dincl, 
         pitch_angle_single, pitch_angle_quality, R_gal = single_magnetic_pitch_angle(xcen=xcen, ycen=ycen, I=I, dI=dI, Q=Q, dQ=dQ, U=U, dU=dU, PA=PA, dPA=dPA, incl=incl, dincl=dincl, 
                                                                                      pol_level=pol_level, dpol_level=dpol_level, pol_flux=pol_flux, dpol_flux=dpol_flux, save_temp=save_temp,
                                                                                      nbins=nbins, nsimul=nsimul, 
-                                                                                     SNR_int_limit=SNR_int_limit, SNR_pol_limit=SNR_pol_limit, SNR_polflux_limit=SNR_polflux_limit,
+                                                                                     SNR_int_limit=SNR_int_limit, SNR_pol_limit=SNR_pol_limit, SNR_polflux_limit=SNR_polflux_limit, p_limit=p_limit,
                                                                                      plot_verbose=plot_verbose, name=name, header=header, 
                                                                                      bin_limits=bin_limits, UQ_bias=UQ_bias)
                                                                                      
