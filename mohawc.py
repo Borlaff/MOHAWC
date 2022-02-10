@@ -470,6 +470,8 @@ def create_angle_mask(xsize, ysize, q, theta, center=None, radius=None, pitch=90
     if center is None: # use the middle of the image
         center = (int(xsize/2), int(ysize/2))
         
+    center[0] = xsize - center[0]
+            
     if radius is None: # use the smallest distance between the center and image walls
         radius = min(center[0], center[1], xsize-center[0], ysize-center[1])
     X, Y = np.ogrid[:xsize, :ysize]
@@ -901,6 +903,8 @@ def magnetic_pitch_angle(xcen, ycen, I, dI, Q, dQ, U, dU, PA, dPA, incl, dincl, 
     # We need to measure the median value and the quantile, taking into account the errors. 
 
     R = np.zeros(nbins)*np.nan
+    R_min = np.zeros(nbins)*np.nan
+    R_max = np.zeros(nbins)*np.nan
     R_s1up = np.zeros(nbins)*np.nan
     R_s1down = np.zeros(nbins)*np.nan
     R_s2up = np.zeros(nbins)*np.nan
@@ -923,8 +927,13 @@ def magnetic_pitch_angle(xcen, ycen, I, dI, Q, dQ, U, dU, PA, dPA, incl, dincl, 
         if bin_limits == None:
             bin_limits = np.linspace(0, np.max(R_gal[~np.isnan(pitch_angle_quality)]), nbins+1)
 
+    
     pitch_angle_boot_list = []
     print("Simulations done, generating profile from cube")
+    
+    print("Bin limits: ")
+    print(bin_limits)
+    
     for i in tqdm(range(len(bin_limits)-1)):
         pitch_angle_boot = np.zeros(nsimul)
         pitch_angle_boot[:] = np.nan
@@ -944,7 +953,8 @@ def magnetic_pitch_angle(xcen, ycen, I, dI, Q, dQ, U, dU, PA, dPA, incl, dincl, 
             npix_sim[j] = np.sum(~np.isnan(pitch_angle_sample))
             
             if force_bootmedian:
-                pitch_angle_boot[j] = ab.bootmedian.bootmedian(sample_input = pitch_angle_sample, nsimul = nsimul_boot, mode="angles", weights=weights_sample)["median"]
+                # pitch_angle_boot[j] = ab.bootmedian.bootmedian(sample_input = pitch_angle_sample, nsimul = nsimul_boot, mode="angles", weights=weights_sample)["median"]
+                pitch_angle_boot[j] = ab.bootmedian.bootmedian(sample_input = pitch_angle_sample, nsimul = nsimul_boot, mode="angles")["median"]
                 R_gal_boot[j] = bn.nanmedian(np.array(R_gal_sample)) #ab.bootmedian.bootmedian(sample_input = np.array(R_gal_sample), nsimul = nsimul_boot, mode="median")["median"]
                                
             else:
@@ -955,9 +965,12 @@ def magnetic_pitch_angle(xcen, ycen, I, dI, Q, dQ, U, dU, PA, dPA, incl, dincl, 
 
         pitch_angle_boot_list.append(pitch_angle_boot)                                                  
         R_gal_median = bn.nanmedian(R_gal_boot) #ab.bootmedian.bootmedian(sample_input = R_gal_boot, nsimul = nsimul_boot, mode="median")
+        # R_gal_median = bn.nanmedian(R_gal[indexes]) #ab.bootmedian.bootmedian(sample_input = R_gal_boot, nsimul = nsimul_boot, mode="median")
         pitch_angle_median = bn.nanmedian(pitch_angle_boot) #ab.bootmedian.bootmedian(sample_input = pitch_angle_boot, nsimul = nsimul_boot, mode="median")
        
         R[i] = R_gal_median
+        R_min[i] = np.nanmin(R_gal_boot)
+        R_max[i] = np.nanmax(R_gal_boot)        
         R_s1up[i] = np.nanpercentile(R_gal_boot, s1_up_q*100)
         R_s1down[i] = np.nanpercentile(R_gal_boot, s1_down_q*100)
         R_s2up[i] = np.nanpercentile(R_gal_boot, s2_up_q*100)
@@ -978,9 +991,9 @@ def magnetic_pitch_angle(xcen, ycen, I, dI, Q, dQ, U, dU, PA, dPA, incl, dincl, 
         pickle.dump(pitch_angle_boot_list, fp)
            
     
-    npix[npix < 1] = np.nan
+    #npix[npix < 1] = np.nan
            
-    median_curve = pd.DataFrame({"R":R, "R_s1up": R_s1up, "R_s1down": R_s1down,
+    median_curve = pd.DataFrame({"R":R, "R_min": R_min, "R_max": R_max, "R_s1up": R_s1up, "R_s1down": R_s1down,
                                  "R_s2up": R_s2up, "R_s2down": R_s2down,
                                  "pitch": pitch, "pitch_s1up": pitch_s1up, "pitch_s1down": pitch_s1down,
                                  "pitch_s2up": pitch_s2up, "pitch_s2down": pitch_s2down, "npix": npix})
