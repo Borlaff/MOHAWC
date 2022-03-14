@@ -181,7 +181,7 @@ def magnetic_pitch_wrapper(image_input, name, source_center, PA, dPA, incl, dinc
     
     # recenter=[M51_center[0], M51_center[1], 2*140./60./60., 2*90./60./60.]
     profile = output_pitch_analysis[0]    
-    fig, ax = plt.subplots(figsize=(10,4))
+    fig, ax = plt.subplots(figsize=(14,3.5))
     # Line + Points
     ax.plot(profile["R"]*pixscale, profile["pitch"], color=profile_color, linestyle=profile_linestyle,
             linewidth=profile_linewidth, label=profile_label, marker=profile_marker, markerfacecolor=profile_color,
@@ -224,7 +224,7 @@ def magnetic_pitch_angle_profile_plot(output_magnetic_pitch_angle_profile):
     median_pitch_angle_hawc_halfbeam = measure_median_pitch_angle(pitch_angle_array)
 
 
-    fig, ax = plt.subplots(figsize=(14,7))
+    fig, ax = plt.subplots(figsize=(14,4.5))
 
     for j in range(len(median_curve["R"])):
         plt.scatter(median_curve["R"][j], median_curve["pitch"][j], color="black", s=2, marker="s")
