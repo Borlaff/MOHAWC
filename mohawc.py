@@ -88,6 +88,25 @@ def magnetic_pitch_wrapper(image_input, name, source_center, PA, dPA, incl, dinc
     # Intro ingredients 
     #image_input="/home/borlaff/NASA/SOFIA/M51_forAlex/M51_forAlex/HAWC+/M51_D_halfbeam.fits"
     
+    # Check if quality cuts are ok.
+    if SNR_pol_limit==0.0:
+        print("SNR pol limit is 0, switching to inf")
+        SNR_pol_limit = np.inf
+
+    if SNR_polflux_limit==0.0:
+        print("SNR polflux limit is 0, switching to inf")
+        SNR_polflux_limit = np.inf
+
+    if p_limit==0.0:
+        print("plimit is 0, switching to inf")
+        p_limit = np.inf
+
+    if SNR_int_limit==0.0:
+        print("SNR int limit is 0, switching to inf")
+        SNR_int_limit = np.inf
+
+    
+    
     obs = fits.open(image_input)
     header=obs["STOKES I"].header
     
@@ -113,12 +132,15 @@ def magnetic_pitch_wrapper(image_input, name, source_center, PA, dPA, incl, dinc
     dQ = np.abs(obs["ERROR Q"].data)
     U =  obs["STOKES U"].data
     dU = np.abs(obs["ERROR U"].data)
+    pol_flux =  obs["DEBIASED POL FLUX"].data
+    dpol_flux = np.abs(obs["ERROR POL FLUX"].data)
+
 
     vmin = np.nanpercentile(I, 2.5)
     vmax = np.nanpercentile(I, 97.5)
     
     #I, dI, Q, dQ, U, dU = apply_mask(mode, mask_fits, header, I, dI, Q, dQ, U, dU)    
-    output_pitch_analysis = magnetic_pitch_angle(xcen=xcen, ycen=ycen, I=I, dI=dI, Q=Q, dQ=dQ, U=U, dU=dU,
+    output_pitch_analysis = magnetic_pitch_angle(xcen=xcen, ycen=ycen, I=I, dI=dI, Q=Q, dQ=dQ, U=U, dU=dU, pol_flux=pol_flux, dpol_flux=dpol_flux, 
                                                  PA=PA, dPA=dPA, incl=incl, dincl=dincl, nsimul=nsimul,
                                                  nbins=nbins, plot_verbose=False, SNR_int_limit=SNR_int_limit, 
                                                  SNR_pol_limit=SNR_pol_limit, SNR_polflux_limit=SNR_polflux_limit, p_limit=p_limit,
@@ -139,23 +161,22 @@ def magnetic_pitch_wrapper(image_input, name, source_center, PA, dPA, incl, dinc
     
     SNR_pol = fits.open(name + "SNR_pol.fits")[0].data
     SNR_int = fits.open(name + "SNR_int.fits")[0].data
+    SNR_polflux = fits.open(name + "polflux_SNR.fits")[0].data
     pol_fraction = fits.open(name + "pol_level.fits")[0].data
-
-    # Generate HAWC+ quality mask
-    quality_mask = np.zeros(I.shape) + 1
-    quality_mask[SNR_pol < SNR_pol_limit] = np.nan
-    quality_mask[SNR_int < SNR_int_limit] = np.nan
-    quality_mask[np.isnan(SNR_pol*SNR_int)] = np.nan
-
+    quality_mask = fits.open(name + "quality_cut.fits")[0].data
+    
     if max_radii == False:
         outermost_meaningful_bin = np.max(np.array(output_pitch_analysis[0]["R_s2up"]))
         max_radii = 1.5*pixscale*outermost_meaningful_bin/np.sqrt(2) # We add a 75% for margin
     print("Max radii: " + str(max_radii))
 
 
-    # Plot pitch model
-    plot_pitch_model(image_input, pol_obs, pitch_model, SNR_int, SNR_pol, SNRi_cut = SNR_int_limit, 
-                     SNRp_cut = SNR_pol_limit, step=2, scalevec = 2.5, header=header, vmin=vmin, vmax=vmax,
+    # Plot pitch model SNR_int, SNR_pol, SNR_polflux,
+    # I, pol_obs, pitch_model, SNR_int, SNR_pol, SNR_polflux, SNR_int_limit, SNR_pol_limit, SNR_polflux_limit, p_limit, step=4,
+    #                 scalevec = 2.5, header=None, save_fig="plot_pitch_model.pdf", vmin=None, vmax=None, alpha_model=1,
+    #                 pol_fraction=None, title=" ", colorscale="viridis", color_model="red", color_obs="black", recenter=None, figsize=6.5, colorbar_label=r'Intensity (Jy arcsec$^{-2}$)', pixscale=None):
+                     
+    plot_pitch_model(I=image_input, pol_obs=pol_obs, pitch_model=pitch_model, quality_mask=quality_mask, step=2, scalevec = 2.5, header=header, vmin=vmin, vmax=vmax,
                      pol_fraction=None, title=plot_title, save_fig=name + "_pitch_model_mode_" + mode + ".png", 
                      color_model="red", color_obs="white", alpha_model=1,
                      recenter=[source_center[0], source_center[1], 2*max_radii/60./60., 2*max_radii/60./60.])
@@ -164,6 +185,7 @@ def magnetic_pitch_wrapper(image_input, name, source_center, PA, dPA, incl, dinc
     
     # Plot of the histogram
     radial_mask = fits.open("radial_mask_test.fits")[0].data*pixscale
+    quality_mask = fits.open(name + "quality_cut.fits")[0].data
     pol90_quality = np.copy(pol90_image)
     pol90_quality[radial_mask>max_radii] = np.nan
     pol90_quality[np.isnan(quality_mask)] = np.nan 
@@ -361,14 +383,13 @@ def save_fits(array, name, header=None):
 
 
 
-def plot_pitch_model(I, pol_obs, pitch_model, SNR_int, SNR_pol, SNRi_cut = 10.0, SNRp_cut = 3.0, step=4,
+def plot_pitch_model(I, pol_obs, pitch_model, quality_mask, step=4,
                      scalevec = 2.5, header=None, save_fig="plot_pitch_model.pdf", vmin=None, vmax=None, alpha_model=1,
                      pol_fraction=None, title=" ", colorscale="viridis", color_model="red", color_obs="black", recenter=None, figsize=6.5, colorbar_label=r'Intensity (Jy arcsec$^{-2}$)', pixscale=None):
     # pol map cuts
-    vector_scale = np.full(SNR_int.shape, 1.0)
-    vector_scale[(SNR_pol < SNRp_cut)] = np.nan
-    vector_scale[np.isnan(SNR_int)] = np.nan    
-    vector_scale[(SNR_int < SNRi_cut)] = np.nan
+    vector_scale = np.full(quality_mask.shape, 1.0)
+  
+    vector_scale[quality_mask==0] = np.nan
     
     if pol_fraction is not None:
         vector_scale = vector_scale * pol_fraction 
@@ -646,8 +667,28 @@ def single_magnetic_pitch_angle(xcen, ycen, I, dI, Q, dQ, U, dU, pol_level, dpol
         q_mc  = np.cos(np.radians(np.random.normal(incl, dincl)))
         # Rotated pol Angle
         pol_mc = rotated_polarization_angle(U=U_mc, Q=Q_mc, UQ_bias=UQ_bias)        
+        
+      
+        int_quality_cut = np.zeros(SNR_int.shape) + 1
+        pol_quality_cut = np.zeros(SNR_int.shape) + 1
+        pi_quality_cut = np.zeros(SNR_int.shape) + 1
+        plim_quality_cut = np.zeros(SNR_int.shape) + 1
+      
+        int_quality_cut[(SNR_int < SNR_int_limit) | np.isnan(SNR_int)] = 0
+        #pol_quality_cut[(SNR_pol < SNR_pol_limit) | np.isnan(SNR_pol)] = 0
+        pi_quality_cut[(SNR_polflux < SNR_polflux_limit) | np.isnan(SNR_polflux)] = 0
+        plim_quality_cut[(pol_dbias > p_limit) | np.isnan(pol_dbias)] = 0
 
+        quality_cut_bool = np.where((int_quality_cut==0) | (pi_quality_cut==0) | (plim_quality_cut==0))
+        quality_cut = np.zeros(SNR_int.shape) + 1
+        quality_cut[quality_cut_bool] = 0
 
+        save_fits(int_quality_cut, name + "quality_cut_SNRi.fits", header=header)
+        save_fits(pi_quality_cut, name + "quality_cut_SNRpi.fits", header=header)
+        save_fits(pol_quality_cut, name + "quality_cut_SNRp.fits", header=header)
+        save_fits(plim_quality_cut, name + "quality_cut_plim.fits", header=header)
+                
+        save_fits(quality_cut, name + "quality_cut.fits", header=header)
         #########################
         ### 2- Radial and angle masks - Pitch angle 0 vector array  
         #########################
@@ -678,6 +719,8 @@ def single_magnetic_pitch_angle(xcen, ycen, I, dI, Q, dQ, U, dU, pol_level, dpol
         #########################
         ### 4- Saving arrays for checking 
         #########################
+        
+
         
         if save_temp:
             save_fits(I_mc, name + "I_MC.fits", header=header)
@@ -759,10 +802,8 @@ def single_magnetic_pitch_angle(xcen, ycen, I, dI, Q, dQ, U, dU, pol_level, dpol
         
         pitch_angle_quality = np.copy(pitch_angle)
         # pitch_angle_quality[np.where((SNR_int < SNR_int_limit) | (SNR_pol < SNR_pol_limit))] = np.nan    # Modify this line, and use PI snr instad of P%. Oct 4th 2021
-        pitch_angle_quality[np.where((SNR_int < SNR_int_limit) | (SNR_polflux < SNR_polflux_limit) | (SNR_pol < SNR_pol_limit) | (pol_dbias > p_limit))] = np.nan    # 
-        pitch_angle_quality[np.isnan(SNR_int)] = np.nan    
-        pitch_angle_quality[np.isnan(SNR_pol)] = np.nan    
-        pitch_angle_quality[np.isnan(SNR_polflux)] = np.nan    
+        pitch_angle_quality[quality_cut_bool] = np.nan    # 
+   
         
         save_fits(pitch_angle_quality, name + "pitch_angle.fits", header=header)  
         
@@ -783,7 +824,7 @@ def single_magnetic_pitch_angle(xcen, ycen, I, dI, Q, dQ, U, dU, pol_level, dpol
 
 
 
-def magnetic_pitch_angle(xcen, ycen, I, dI, Q, dQ, U, dU, PA, dPA, incl, dincl, nsimul=100,
+def magnetic_pitch_angle(xcen, ycen, I, dI, Q, dQ, U, dU, pol_flux, dpol_flux, PA, dPA, incl, dincl, nsimul=100,
                          nbins=10, plot_verbose=False, SNR_int_limit=np.inf, SNR_pol_limit=np.inf, SNR_polflux_limit=np.inf, p_limit=np.inf,
                          name="default_", header=None, bin_limits=None, save_temp=False, force_bootmedian=False, UQ_bias=90.):
     #####################################################
@@ -853,18 +894,11 @@ def magnetic_pitch_angle(xcen, ycen, I, dI, Q, dQ, U, dU, PA, dPA, incl, dincl, 
     dpol_level = np.abs(100*np.sqrt(dpol_level_A + dpol_level_B)/I)
     pol_dbias = np.sqrt(pol_level**2 - dpol_level**2)
     
-    pol_flux = np.sqrt(Q**2 + U**2)
-    dpol_flux = np.abs((dQ*Q + dU*U)/np.sqrt(Q**2 + U**2))
     save_fits(pol_flux/dpol_flux, name + "polflux_SNR.fits", header=header)    
     save_fits(pol_dbias, name + "pol_dbias.fits", header=header)
     SNR_pol = pol_dbias/dpol_level
     SNR_int = I/dI
-    ###########################################
-    
-    pol_90_rotated = rotated_polarization_angle(U=U, Q=Q, UQ_bias=UQ_bias)
-    pol_90_rotated[np.where((SNR_int < SNR_int_limit) | (SNR_pol < SNR_pol_limit))] = np.nan
-    save_fits(pol_90_rotated, name + "pol90.fits", header=header)
-    
+
     
     # To be done: Check is Q, dQ, U, dU are all of the same shape 
     pitch_angle_array = []
@@ -887,7 +921,17 @@ def magnetic_pitch_angle(xcen, ycen, I, dI, Q, dQ, U, dU, PA, dPA, incl, dincl, 
         pitch_angle_cube[i,:,:] =  pitch_angle_quality  
         R_gal_cube[i,:,:] =  R_gal                
         pitch_angle_array.append(pitch_angle_single)
-            
+           
+           
+    ###########################################
+    
+    pol_90_rotated = rotated_polarization_angle(U=U, Q=Q, UQ_bias=UQ_bias)
+    quality_mask = fits.open(name + "quality_cut.fits")[0].data
+    pol_90_rotated[quality_mask==0] = np.nan
+    save_fits(pol_90_rotated, name + "pol90.fits", header=header)
+    
+    ###########################################
+     
     hdu1 = fits.PrimaryHDU(pitch_angle_cube)
     hdu2 = fits.ImageHDU(R_gal_cube)
 
